@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>ウッポ 〜靱公園のねむり番〜</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700&family=Shippori+Mincho:wght@600&display=swap" rel="stylesheet">
+<script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+<script>
+/* ---- tuning knobs: adjust on-device ---- */
+window.UPPO_CONFIG = {
+  UPPO_SCALE: 0.5,                 // overall size of Uppo on the card
+  UPPO_POS:   '0 0 0',             // x y z offset (raise Y if model sinks into card)
+  ROTATE_X:   -90,                 // -90 = card lies flat on table; 0 = card held upright facing camera
+  ROTATE_Y:   0,                   // 180 if Uppo faces away from viewer
+  HEAD_Y:     1.35,                // height where young leaves sprout (model-local units)
+  ROSE_RINGS: [                    // rose rings on the ground around the feet
+    { r: 0.70, count: 6 },
+    { r: 1.15, count: 9 },
+  ],
+};
+
+window.addEventListener('DOMContentLoaded', () => {
+  const cfg    = window.UPPO_CONFIG;
+  const scene  = document.querySelector('a-scene');
+  const startBtn = document.getElementById('startBtn');
+  const startScreen = document.getElementById('start');
+  const hintApply = () => {
+    const stage = document.getElementById('stage');
+    const uppo  = document.getElementById('uppo');
+    const leaves= document.getElementById('leaves');
+    if (stage) stage.setAttribute('rotation', `${cfg.ROTATE_X} ${cfg.ROTATE_Y} 0`);
+    if (uppo)  { uppo.setAttribute('scale', `${cfg.UPPO_SCALE} ${cfg.UPPO_SCALE} ${cfg.UPPO_SCALE}`);
+                 uppo.setAttribute('position', cfg.UPPO_POS); }
+    if (leaves) leaves.setAttribute('position', `0 ${cfg.HEAD_Y} 0`);
+  };
+  if (scene.hasLoaded) hintApply(); else scene.addEventListener('loaded', hintApply);
+
+  const startAR = () => {
+    startScreen.style.opacity = '0';
+    setTimeout(() => { startScreen.style.display = 'none'; }, 400);
+    const sys = scene.systems['mindar-image-system'];
+    try { sys.start(); } catch (e) { console.error(e); }
+  };
+  startBtn.addEventListener('click', startAR);
+});
+
+</script>
+<script>
+/* uppo-experience: state machine for the AR wake/bloom loop */
+AFRAME.registerComponent('uppo-experience', {
+  init: function () {
+    this.CFG = window.UPPO_CONFIG;
+    this.state = 'idle';               // idle -> sleeping -> waking -> farewell -> (reset) sleeping
+    this.uppo   = this.el.querySelector('#uppo');
+    this.leaves = this.el.querySelector('#leaves');
+    this.roses  = this.el.querySelector('#roses');
+    this.base   = this.CFG.UPPO_SCALE;
+    this._buildLeaves();
+    this._buildRoses();
+
+    this.el.addEventListener('targetFound', () => this.onFound());
+    this.el.addEventListener('targetLost',  () => this.onLost());
+    // Taps advance the story. Bind on window so a tap anywhere counts.
+    this._onTap = () => this.onTap();
+    window.addEventListener('pointerdown', this._onTap);
+
+    this._setHint('マーカーカードにかざしてね');
+  },
+
+  remove: function () { window.removeEventListener('pointerdown', this._onTap); },
+
+  /* ---------- build procedural leaves ---------- */
+  _buildLeaves: function () {
+    const greens = ['#7cb342', '#8bc34a', '#5f9a35', '#98c85a', '#6faa3c'];
+    const tilts  = [ [0,0,0], [14,0,-8], [-12,0,10], [10,0,20], [-8,0,-22] ];
+    const heights= [0.42, 0.34, 0.34, 0.28, 0.28];
+    for (let i = 0; i < 5; i++) {
+      const leaf = document.createElement('a-entity');
+      leaf.setAttribute('geometry', `primitive: cone; radiusBottom: 0.055; radiusTop: 0; height: ${heights[i]}; segmentsRadial: 8`);
+      leaf.setAttribute('material', `color: ${greens[i]}; roughness: 0.85; metalness: 0; flatShading: true`);
+      const t = tilts[i];
+      leaf.setAttribute('position', `${(i-2)*0.02} ${heights[i]/2} 0`);
+      leaf.setAttribute('rotation', `${t[0]} ${t[1]} ${t[2]}`);
+      leaf.setAttribute('scale', '0 0 0');
+      leaf.setAttribute('animation__pop',
+        `property: scale; from: 0 0 0; to: 1 1 1; dur: 460; easing: easeOutBack; startEvents: bloom; delay: ${i*70}`);
+      leaf.setAttribute('animation__hide',
+        `property: scale; to: 0 0 0; dur: 260; easing: easeInQuad; startEvents: hide`);
+      this.leaves.appendChild(leaf);
+    }
+  },
+
+  /* ---------- build procedural roses (rings) ---------- */
+  _buildRoses: function () {
+    let order = 0;
+    this.CFG.ROSE_RINGS.forEach((ring, ri) => {
+      for (let k = 0; k < ring.count; k++) {
+        const ang = (k / ring.count) * Math.PI * 2 + ri * 0.4;
+        const jit = (Math.sin(order * 12.9898) * 43758.5453) % 1;
+        const r = ring.r + (jit - 0.5) * 0.12;
+        const x = Math.cos(ang) * r;
+        const z = Math.sin(ang) * r;
+        const rose = document.createElement('a-entity');
+        rose.setAttribute('position', `${x} 0.02 ${z}`);
+        rose.setAttribute('scale', '0 0 0');
+        rose.setAttribute('animation__pop',
+          `property: scale; from: 0 0 0; to: 1 1 1; dur: 520; easing: easeOutBack; startEvents: bloom; delay: ${200 + order*45}`);
+        rose.setAttribute('animation__hide',
+          `property: scale; to: 0 0 0; dur: 260; easing: easeInQuad; startEvents: hide`);
+        // layered flat petals -> reads as a bloom from above
+        const layers = [
+          {rad: 0.10, h: 0.02, y: 0.00, c: '#c62439'},
+          {rad: 0.075,h: 0.03, y: 0.02, c: '#a71b2e'},
+          {rad: 0.045,h: 0.03, y: 0.045,c: '#7e1322'},
+        ];
+        layers.forEach(L => {
+          const p = document.createElement('a-cylinder');
+          p.setAttribute('radius', L.rad);
+          p.setAttribute('height', L.h);
+          p.setAttribute('position', `0 ${L.y} 0`);
+          p.setAttribute('material', `color: ${L.c}; roughness: 0.8; metalness: 0; flatShading: true`);
+          rose.appendChild(p);
+        });
+        this.roses.appendChild(rose);
+        order++;
+      }
+    });
+  },
+
+  /* ---------- events ---------- */
+  onFound: function () {
+    this.el.object3D.visible = true;
+    if (this.state === 'idle') this._toSleeping();
+    this._setHint(this.state === 'farewell' ? 'もう一度 タップ' : '画面をタップして起こそう');
+  },
+  onLost: function () { /* keep state; content re-anchors when found again */ },
+
+  onTap: function () {
+    if (this.state === 'sleeping')  this._wake();
+    else if (this.state === 'farewell') this._reset();
+  },
+
+  /* ---------- state transitions ---------- */
+  _toSleeping: function () {
+    this.state = 'sleeping';
+    this.uppo.setAttribute('scale', `${this.base} ${this.base} ${this.base}`);
+    this.uppo.setAttribute('animation__breath',
+      `property: scale; dir: alternate; loop: true; dur: 2600; easing: easeInOutSine; from: ${this.base} ${this.base} ${this.base}; to: ${this.base} ${this.base*1.035} ${this.base}`);
+    this._setHint('画面をタップして起こそう');
+    this._setFarewell(false);
+  },
+
+  _wake: function () {
+    this.state = 'waking';
+    this._setHint('');
+    this.uppo.removeAttribute('animation__breath');
+    const b = this.base;
+    // squash & stretch keyframes, then settle
+    this._scaleKeys(this.uppo.object3D, [
+      {t: 0,    s: [b, b, b]},
+      {t: 130,  s: [b*1.22, b*0.72, b*1.22], e: this._easeOutQuad},
+      {t: 320,  s: [b*0.86, b*1.24, b*0.86], e: this._easeOutQuad},
+      {t: 560,  s: [b, b, b], e: this._easeOutBack},
+    ], () => {
+      this.leaves.querySelectorAll('a-entity').forEach(l => l.emit('bloom'));
+      this.roses.querySelectorAll('a-entity').forEach(r => r.emit('bloom'));
+      const bloomMs = 200 + this._roseCount() * 45 + 520;
+      setTimeout(() => this._toFarewell(), bloomMs + 200);
+    });
+  },
+
+  _toFarewell: function () {
+    this.state = 'farewell';
+    this._setFarewell(true);
+    this._setHint('もう一度 タップ');
+  },
+
+  _reset: function () {
+    this.state = 'resetting';
+    this._setFarewell(false);
+    this.leaves.querySelectorAll('a-entity').forEach(l => l.emit('hide'));
+    this.roses.querySelectorAll('a-entity').forEach(r => r.emit('hide'));
+    setTimeout(() => this._toSleeping(), 320);
+  },
+
+  /* ---------- helpers ---------- */
+  _roseCount: function () { return this.roses.querySelectorAll('a-entity').length; },
+  _easeOutQuad: function (t) { return 1 - (1 - t) * (1 - t); },
+  _easeOutBack: function (t) { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); },
+
+  _scaleKeys: function (obj3d, keys, done) {
+    let i = 0;
+    const seg = () => {
+      if (i >= keys.length - 1) { if (done) done(); return; }
+      const a = keys[i], b = keys[i + 1];
+      const dur = b.t - a.t, ease = b.e || (x => x), t0 = performance.now();
+      const step = (now) => {
+        let p = dur <= 0 ? 1 : Math.min(1, (now - t0) / dur);
+        const e = ease(p);
+        obj3d.scale.set(
+          a.s[0] + (b.s[0] - a.s[0]) * e,
+          a.s[1] + (b.s[1] - a.s[1]) * e,
+          a.s[2] + (b.s[2] - a.s[2]) * e);
+        if (p < 1) requestAnimationFrame(step); else { i++; seg(); }
+      };
+      requestAnimationFrame(step);
+    };
+    seg();
+  },
+
+  _setHint: function (txt) {
+    const el = document.getElementById('hint');
+    if (!el) return;
+    if (txt) { el.textContent = txt; el.style.opacity = '1'; }
+    else el.style.opacity = '0';
+  },
+  _setFarewell: function (on) {
+    const el = document.getElementById('farewell');
+    if (el) el.style.opacity = on ? '1' : '0';
+  },
+});
+
+</script>
+<style>
+  :root{
+    --washi:#efe7d6; --washi2:#f5efe1; --ink:#2b2622;
+    --bark:#7a5230; --leaf:#6a9a3f; --rose:#b0202f; --gold:#b8892b;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:#111;font-family:"Zen Maru Gothic",sans-serif;
+    -webkit-tap-highlight-color:transparent;overflow:hidden;}
+  a-scene{position:fixed;inset:0;}
+
+  /* ---------- HUD (over the camera) ---------- */
+  #hud{position:fixed;inset:0;z-index:10;pointer-events:none;}
+  #title{position:absolute;top:calc(env(safe-area-inset-top,0) + 14px);left:0;right:0;
+    text-align:center;color:#fff;font-weight:700;font-size:17px;letter-spacing:.06em;
+    text-shadow:0 2px 8px rgba(0,0,0,.55);}
+  #title small{display:block;font-weight:500;font-size:12px;opacity:.9;margin-top:2px;letter-spacing:.14em;}
+  #hint{position:absolute;left:50%;transform:translateX(-50%);
+    bottom:calc(env(safe-area-inset-bottom,0) + 26px);
+    background:rgba(43,38,34,.86);color:#f5efe1;font-weight:700;font-size:16px;
+    padding:12px 22px;border-radius:999px;border:1.5px solid rgba(245,239,225,.35);
+    box-shadow:0 6px 18px rgba(0,0,0,.35);transition:opacity .4s;white-space:nowrap;}
+  #farewell{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    width:min(82vw,340px);text-align:center;opacity:0;transition:opacity .6s;
+    background:linear-gradient(180deg,var(--washi2),var(--washi));
+    color:var(--ink);border:2px solid var(--ink);border-radius:14px;
+    padding:22px 20px 18px;box-shadow:0 12px 34px rgba(0,0,0,.4);}
+  #farewell .fw-lead{font-weight:700;font-size:19px;line-height:1.7;}
+  #farewell .fw-sub{margin-top:12px;font-family:"Shippori Mincho",serif;font-weight:600;
+    font-size:13px;color:var(--bark);letter-spacing:.04em;}
+  #farewell .strip{display:flex;gap:5px;justify-content:center;margin-top:14px;}
+  #farewell .strip i{width:34px;height:5px;border-radius:2px;display:block;}
+
+  /* ---------- Start screen ---------- */
+  #start{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;
+    padding:26px;transition:opacity .4s;
+    background:
+      radial-gradient(120% 90% at 50% 0%, #f6f0e2 0%, var(--washi) 55%, #e7dcc6 100%);}
+  #card{width:min(92vw,420px);border:2px solid var(--ink);border-radius:6px;
+    padding:8px;background:var(--washi2);box-shadow:0 18px 50px rgba(0,0,0,.28);}
+  #card .inner{border:1.5px solid var(--ink);border-radius:4px;padding:30px 24px 26px;text-align:center;
+    background:
+      repeating-linear-gradient(115deg,rgba(122,82,48,.03) 0 3px,transparent 3px 7px),
+      var(--washi2);}
+  #card h1{margin:0;font-weight:700;font-size:44px;color:var(--ink);letter-spacing:.1em;line-height:1.05;}
+  #card .sub{margin:8px 0 0;font-weight:500;font-size:15px;color:var(--bark);letter-spacing:.14em;}
+  #card .strip{display:flex;gap:6px;justify-content:center;margin:14px 0 20px;}
+  #card .strip i{width:52px;height:6px;border-radius:2px;display:block;}
+  #card p.lead{font-size:13.5px;color:#5a4c3d;line-height:1.9;margin:0 0 22px;}
+  #startBtn{pointer-events:auto;cursor:pointer;border:none;font-family:inherit;
+    background:var(--ink);color:var(--washi2);font-weight:700;font-size:18px;
+    padding:15px 40px;border-radius:999px;letter-spacing:.08em;
+    box-shadow:0 8px 0 #17130f, 0 14px 24px rgba(0,0,0,.3);transition:transform .08s, box-shadow .08s;}
+  #startBtn:active{transform:translateY(4px);box-shadow:0 4px 0 #17130f,0 8px 14px rgba(0,0,0,.3);}
+  #startBtn .k{display:block;font-weight:500;font-size:11px;opacity:.85;margin-top:3px;letter-spacing:.16em;}
+  #note{margin-top:16px;font-size:11.5px;color:var(--gold);font-weight:500;letter-spacing:.1em;}
+  .strip .c-bark{background:var(--bark);} .strip .c-leaf{background:var(--leaf);} .strip .c-rose{background:var(--rose);}
+</style>
+</head>
+<body>
+
+  <a-scene
+    mindar-image="imageTargetSrc: ./targets.mind; autoStart: false; uiLoading: no; uiScanning: no; uiError: no;"
+    color-space="sRGB"
+    renderer="colorManagement: true; physicallyCorrectLights: true; antialias: true"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false">
+
+    <a-assets>
+      <a-asset-item id="uppoModel" src="uppo.glb"></a-asset-item>
+    </a-assets>
+
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+
+    <!-- soft light so the matte toon model reads well -->
+    <a-entity light="type: hemisphere; color: #fff6e6; groundColor: #6a7a4a; intensity: 1.05"></a-entity>
+    <a-entity light="type: directional; color: #fff; intensity: 0.55" position="1 2 1.5"></a-entity>
+
+    <a-entity id="target" mindar-image-target="targetIndex: 0" uppo-experience>
+      <a-entity id="stage" rotation="-90 0 0">
+        <a-entity id="uppo" gltf-model="#uppoModel" position="0 0 0" scale="0.5 0.5 0.5"></a-entity>
+        <a-entity id="leaves" position="0 1.35 0"></a-entity>
+        <a-entity id="roses"  position="0 0 0"></a-entity>
+      </a-entity>
+    </a-entity>
+  </a-scene>
+
+  <!-- HUD -->
+  <div id="hud">
+    <div id="title">ウッポ<small>〜 靱公園のねむり番 〜</small></div>
+    <div id="hint" style="opacity:0">マーカーカードにかざしてね</div>
+    <div id="farewell">
+      <div class="fw-lead">ありがとう。<br>また、ここで ねむっているね。</div>
+      <div class="fw-sub">── 物語が、木を守る。</div>
+      <div class="strip"><i class="c-bark"></i><i class="c-leaf"></i><i class="c-rose"></i></div>
+    </div>
+  </div>
+
+  <!-- Start screen (also provides the user gesture iOS needs for camera) -->
+  <div id="start">
+    <div id="card"><div class="inner">
+      <h1>ウッポ</h1>
+      <div class="sub">〜 靱公園のねむり番 〜</div>
+      <div class="strip"><i class="c-bark"></i><i class="c-leaf"></i><i class="c-rose"></i></div>
+      <p class="lead">靱公園の御神木で、眠る木霊にそっと触れると、<br>目を覚まし、若葉が芽吹き、バラが咲き広がる。</p>
+      <button id="startBtn">はじめる<span class="k">カメラを ゆるして ください</span></button>
+      <div id="note">靱公園AR ・ WebXRで、木霊にふれる</div>
+    </div></div>
+  </div>
+
+</body>
+</html>
