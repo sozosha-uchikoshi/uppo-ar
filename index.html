@@ -280,7 +280,7 @@ AFRAME.registerComponent('uppo-experience', {
   _setFarewell:function(on){const el=document.getElementById('farewell');if(el)el.style.opacity=on?'1':'0';},
   _set:function(k,v){this.dbg[k]=v;this._renderDbg();},
   _renderDbg:function(){if(!this.CFG.DEBUG)return;const el=document.getElementById('debug');if(!el)return;el.style.display='block';
-    el.textContent=`カメラ: ${this.dbg.AR}\nモデル: ${this.dbg.model}\nマーカー: ${this.dbg.target}\n状態: ${this.dbg.state}`;},
+    el.textContent=`ビルド: v5 ✅（新）\nカメラ: ${this.dbg.AR}\nモデル: ${this.dbg.model}\nマーカー: ${this.dbg.target}\n状態: ${this.dbg.state}`;},
 });
 
 </script>
