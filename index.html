@@ -36,6 +36,14 @@ window.addEventListener('DOMContentLoaded', () => {
   };
   if (scene.hasLoaded) applyCfg(); else scene.addEventListener('loaded', applyCfg);
 
+  // make the 3D canvas transparent so the camera feed is visible behind it
+  const makeTransparent = () => {
+    try { const r = scene.renderer; if (r) { r.setClearColor(0x000000, 0); r.setClearAlpha(0); } } catch (e) {}
+  };
+  scene.addEventListener('renderstart', makeTransparent);
+  if (scene.renderer) makeTransparent();
+  setTimeout(makeTransparent, 1500);
+
   const startAR = () => {
     startScreen.style.opacity = '0';
     setTimeout(() => { startScreen.style.display = 'none'; }, 400);
@@ -107,30 +115,36 @@ AFRAME.registerComponent('uppo-experience', {
     const root = this.uppo.getObject3D('mesh');
     if (!root) { this._fallback('mesh無し'); return; }
     root.updateWorldMatrix(true, true);
-    const box = new THREE.Box3(); let got = false;
-    root.traverse((o) => {
-      if (o.isMesh && o.geometry) {
-        if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
-        const gb = o.geometry.boundingBox;
-        if (gb && isFinite(gb.min.x) && isFinite(gb.max.x)) {
-          const w = gb.clone(); w.applyMatrix4(o.matrixWorld);
-          if (isFinite(w.min.y) && isFinite(w.max.y)) { box.union(w); got = true; }
+
+    // fast path
+    let box = new THREE.Box3().setFromObject(root);
+    let ok = box && isFinite(box.min.y) && isFinite(box.max.y) && (box.max.y - box.min.y) > 1e-6;
+
+    // robust path: scan raw vertices (bulletproof for rigged/skinned GLB that yields NaN bounds)
+    if (!ok) {
+      box = new THREE.Box3(); const v = new THREE.Vector3(); let any = false;
+      root.traverse((o) => {
+        if (o.isMesh && o.geometry && o.geometry.attributes && o.geometry.attributes.position) {
+          const pos = o.geometry.attributes.position;
+          for (let i = 0; i < pos.count; i++) {
+            v.fromBufferAttribute(pos, i); v.applyMatrix4(o.matrixWorld);
+            if (isFinite(v.x) && isFinite(v.y) && isFinite(v.z)) { box.expandByPoint(v); any = true; }
+          }
         }
-      }
-    });
-    const size = new THREE.Vector3(), center = new THREE.Vector3();
-    if (got) { box.getSize(size); box.getCenter(center); }
-    const h = size.y;
-    if (!got || !isFinite(h) || h <= 1e-6) {
-      if (this._mtry++ < 8) { setTimeout(() => this._measure(), 150); return; }  // retry: geometry bbox not ready yet
-      this._fallback('自動計測不可'); return;
+      });
+      ok = any && (box.max.y - box.min.y) > 1e-6;
     }
-    const s = this.CFG.TARGET_H / h;
+
+    if (!ok) { if (this._mtry++ < 5) { setTimeout(() => this._measure(), 150); return; } this._fallback('自動計測不可'); return; }
+
+    const size = new THREE.Vector3(), center = new THREE.Vector3();
+    box.getSize(size); box.getCenter(center);
+    const s = this.CFG.TARGET_H / size.y;
     this.baseS = s;
     this.uppo.object3D.scale.set(s, s, s);
     this.uppo.object3D.position.set(-center.x * s, -box.min.y * s, -center.z * s); // feet on ground, centered
     this.leaves.object3D.position.y = this.CFG.TARGET_H * this.CFG.HEAD_Y_RATIO;   // leaves on the head
-    this._set('model', 'OK ✓ (h=' + h.toFixed(2) + ')');
+    this._set('model', 'OK ✓ (h=' + size.y.toFixed(2) + ')');
   },
 
   _fallback: function (reason) {
