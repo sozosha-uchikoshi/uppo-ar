@@ -94,18 +94,19 @@ AFRAME.registerComponent('uppo-experience', {
     Object.assign(v.style, {
       position: 'fixed', top: '0', left: '0', right: '0', bottom: '0',
       width: '100%', height: '100%', objectFit: 'cover',
-      display: 'block', visibility: 'visible', zIndex: '-1',
+      display: 'block', visibility: 'visible', zIndex: '0',
     });
     // re-apply once more in case MindAR restyles after start
-    setTimeout(() => Object.assign(v.style, { position:'fixed', width:'100%', height:'100%', objectFit:'cover', zIndex:'-1' }), 1200);
+    setTimeout(() => Object.assign(v.style, { position:'fixed', width:'100%', height:'100%', objectFit:'cover', zIndex:'0' }), 1200);
   },
 
-  _onModelLoaded: function () {
+  _onModelLoaded: function () { this._mtry = 0; this._measure(); },
+
+  _measure: function () {
     const THREE = AFRAME.THREE;
     const root = this.uppo.getObject3D('mesh');
-    if (!root) { this._applyScale(this.CFG.FALLBACK_SCALE, null); this._set('model','mesh無し→固定'); return; }
-    root.updateMatrixWorld(true);
-    // Measure by unioning each geometry's own bbox (robust for rigged/skinned GLB)
+    if (!root) { this._fallback('mesh無し'); return; }
+    root.updateWorldMatrix(true, true);
     const box = new THREE.Box3(); let got = false;
     root.traverse((o) => {
       if (o.isMesh && o.geometry) {
@@ -117,18 +118,28 @@ AFRAME.registerComponent('uppo-experience', {
         }
       }
     });
-    let size = new THREE.Vector3(), center = new THREE.Vector3();
+    const size = new THREE.Vector3(), center = new THREE.Vector3();
     if (got) { box.getSize(size); box.getCenter(center); }
     const h = size.y;
-    if (got && isFinite(h) && h > 1e-6) {
-      const s = this.CFG.TARGET_H / h;
-      this._applyScale(s, { center, minY: box.min.y });
-      this._set('model', 'OK ✓ (h=' + h.toFixed(2) + ')');
-    } else {
-      this._applyScale(this.CFG.FALLBACK_SCALE, null);   // couldn't measure -> fixed size
-      this._set('model', 'OK ✓ (自動計測不可→固定 ' + this.CFG.FALLBACK_SCALE + ')');
+    if (!got || !isFinite(h) || h <= 1e-6) {
+      if (this._mtry++ < 8) { setTimeout(() => this._measure(), 150); return; }  // retry: geometry bbox not ready yet
+      this._fallback('自動計測不可'); return;
     }
-    this.leaves.object3D.position.y = this.CFG.TARGET_H * this.CFG.HEAD_Y_RATIO;
+    const s = this.CFG.TARGET_H / h;
+    this.baseS = s;
+    this.uppo.object3D.scale.set(s, s, s);
+    this.uppo.object3D.position.set(-center.x * s, -box.min.y * s, -center.z * s); // feet on ground, centered
+    this.leaves.object3D.position.y = this.CFG.TARGET_H * this.CFG.HEAD_Y_RATIO;   // leaves on the head
+    this._set('model', 'OK ✓ (h=' + h.toFixed(2) + ')');
+  },
+
+  _fallback: function (reason) {
+    const s = this.CFG.FALLBACK_SCALE;
+    this.baseS = s;
+    this.uppo.object3D.scale.set(s, s, s);
+    this.uppo.object3D.position.set(0, 0, 0);
+    this.leaves.object3D.position.y = this.CFG.TARGET_H * this.CFG.HEAD_Y_RATIO * s;
+    this._set('model', 'OK ✓ (' + reason + '→固定 ' + s + ')');
   },
 
   _applyScale: function (s, recenter) {
@@ -165,7 +176,7 @@ AFRAME.registerComponent('uppo-experience', {
       rose.setAttribute('scale','0 0 0');
       rose.setAttribute('animation__pop',`property: scale; from: 0 0 0; to: 1 1 1; dur: 520; easing: easeOutBack; startEvents: bloom; delay: ${200+order*45}`);
       rose.setAttribute('animation__hide',`property: scale; to: 0 0 0; dur: 260; easing: easeInQuad; startEvents: hide`);
-      [{rad:0.09,h:0.02,y:0,c:'#c62439'},{rad:0.065,h:0.03,y:0.02,c:'#a71b2e'},{rad:0.04,h:0.03,y:0.04,c:'#7e1322'}].forEach(L=>{
+      [{rad:0.07,h:0.018,y:0,c:'#c62439'},{rad:0.05,h:0.026,y:0.016,c:'#a71b2e'},{rad:0.03,h:0.026,y:0.032,c:'#7e1322'}].forEach(L=>{
         const p=document.createElement('a-cylinder');
         p.setAttribute('radius',L.rad); p.setAttribute('height',L.h);
         p.setAttribute('position',`0 ${L.y} 0`);
@@ -251,6 +262,8 @@ AFRAME.registerComponent('uppo-experience', {
   #startBtn .k{display:block;font-weight:500;font-size:11px;opacity:.85;margin-top:3px;letter-spacing:.16em;}
   #note{margin-top:16px;font-size:11.5px;color:var(--gold);font-weight:500;letter-spacing:.1em;}
   .strip .c-bark{background:var(--bark);} .strip .c-leaf{background:var(--leaf);} .strip .c-rose{background:var(--rose);}
+  video{position:fixed !important;top:0 !important;left:0 !important;width:100% !important;height:100% !important;object-fit:cover !important;z-index:0 !important;}
+  .a-canvas{z-index:1 !important;}
 </style>
 </head>
 <body>
