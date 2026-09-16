@@ -16,7 +16,7 @@ window.UPPO_CONFIG = {
   TARGET_H:     1.0,     // auto-scale Uppo to this height (ignored if measure fails)
   FALLBACK_SCALE:0.5,    // used when the GLB height can't be measured (rigged models)
   HEAD_Y_RATIO: 1.05,    // leaves sprout at TARGET_H * this
-  ROTATE_X:     0,       // 0 = card held UPRIGHT facing camera (default); -90 = card FLAT on a table
+  ROTATE_X:     -90,     // -90 = card FLAT on a table (default); 0 = card held UPRIGHT facing camera
   ROTATE_Y:     0,       // 180 if Uppo faces away
   ROSE_RINGS: [ { r: 0.42, count: 6 }, { r: 0.68, count: 9 } ],
 };
@@ -56,7 +56,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 </script>
 <script>
-/* uppo-experience v3: robust model measure (+fallback) + reliable camera check */
+/* uppo-experience v4: 3-tier model measure + recentering fallback + reliable camera check */
 AFRAME.registerComponent('uppo-experience', {
   init: function () {
     this.CFG    = window.UPPO_CONFIG;
@@ -113,55 +113,91 @@ AFRAME.registerComponent('uppo-experience', {
   _measure: function () {
     const THREE = AFRAME.THREE;
     const root = this.uppo.getObject3D('mesh');
-    if (!root) { this._fallback('mesh無し'); return; }
+    if (!root) { if (this._mtry++ < 8) { setTimeout(() => this._measure(), 150); return; } this._fallback('mesh無し', null); return; }
     root.updateWorldMatrix(true, true);
 
-    // fast path
-    let box = new THREE.Box3().setFromObject(root);
-    let ok = box && isFinite(box.min.y) && isFinite(box.max.y) && (box.max.y - box.min.y) > 1e-6;
-
-    // robust path: scan raw vertices (bulletproof for rigged/skinned GLB that yields NaN bounds)
-    if (!ok) {
-      box = new THREE.Box3(); const v = new THREE.Vector3(); let any = false;
-      root.traverse((o) => {
-        if (o.isMesh && o.geometry && o.geometry.attributes && o.geometry.attributes.position) {
-          const pos = o.geometry.attributes.position;
-          for (let i = 0; i < pos.count; i++) {
-            v.fromBufferAttribute(pos, i); v.applyMatrix4(o.matrixWorld);
-            if (isFinite(v.x) && isFinite(v.y) && isFinite(v.z)) { box.expandByPoint(v); any = true; }
-          }
-        }
-      });
-      ok = any && (box.max.y - box.min.y) > 1e-6;
+    const box = this._robustBox(root);
+    if (!this._boxOk(box)) {
+      if (this._mtry++ < 6) { setTimeout(() => this._measure(), 150); return; }
+      this._fallback('自動計測不可', root); return;
     }
-
-    if (!ok) { if (this._mtry++ < 5) { setTimeout(() => this._measure(), 150); return; } this._fallback('自動計測不可'); return; }
 
     const size = new THREE.Vector3(), center = new THREE.Vector3();
     box.getSize(size); box.getCenter(center);
-    const s = this.CFG.TARGET_H / size.y;
-    this.baseS = s;
-    this.uppo.object3D.scale.set(s, s, s);
-    this.uppo.object3D.position.set(-center.x * s, -box.min.y * s, -center.z * s); // feet on ground, centered
-    this.leaves.object3D.position.y = this.CFG.TARGET_H * this.CFG.HEAD_Y_RATIO;   // leaves on the head
+    this._place(this.CFG.TARGET_H / size.y, center, box.min.y);
     this._set('model', 'OK ✓ (h=' + size.y.toFixed(2) + ')');
   },
 
-  _fallback: function (reason) {
+  // Three-tier bounding box: setFromObject -> raw vertex scan -> per-geometry boundingBox.
+  _robustBox: function (root) {
+    const THREE = AFRAME.THREE;
+    root.updateWorldMatrix(true, true);
+
+    // tier 1: fast
+    let box = new THREE.Box3().setFromObject(root);
+    if (this._boxOk(box)) return box;
+
+    // tier 2: scan raw vertices in world space (bulletproof vs NaN bounds)
+    box = new THREE.Box3(); const v = new THREE.Vector3(); let any = false;
+    root.traverse((o) => {
+      if (o.isMesh && o.geometry && o.geometry.attributes && o.geometry.attributes.position) {
+        const pos = o.geometry.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+          v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+          if (isFinite(v.x) && isFinite(v.y) && isFinite(v.z)) { box.expandByPoint(v); any = true; }
+        }
+      }
+    });
+    if (any && this._boxOk(box)) return box;
+
+    // tier 3: union of each geometry's own boundingBox, transformed to world
+    box = new THREE.Box3(); any = false; const tmp = new THREE.Box3();
+    root.traverse((o) => {
+      if (o.isMesh && o.geometry) {
+        if (!o.geometry.boundingBox) { try { o.geometry.computeBoundingBox(); } catch (e) {} }
+        const bb = o.geometry.boundingBox;
+        if (bb && isFinite(bb.min.y) && isFinite(bb.max.y)) { tmp.copy(bb).applyMatrix4(o.matrixWorld); box.union(tmp); any = true; }
+      }
+    });
+    if (any && this._boxOk(box)) return box;
+
+    return null;
+  },
+
+  _boxOk: function (box) {
+    return !!box && isFinite(box.min.x) && isFinite(box.min.y) && isFinite(box.min.z)
+                 && isFinite(box.max.x) && isFinite(box.max.y) && isFinite(box.max.z)
+                 && (box.max.y - box.min.y) > 1e-6;
+  },
+
+  // scale to TARGET_H, feet on the ground (y=0), centered, leaves on the head.
+  _place: function (s, center, minY) {
+    this.baseS = s;
+    this.uppo.object3D.scale.set(s, s, s);
+    this.uppo.object3D.position.set(-center.x * s, -minY * s, -center.z * s);
+    this.leaves.object3D.position.y = this.CFG.TARGET_H * this.CFG.HEAD_Y_RATIO;
+  },
+
+  // last resort: fixed scale, but still recenter so Uppo never sinks below / drifts off the marker.
+  _fallback: function (reason, root) {
+    const THREE = AFRAME.THREE;
     const s = this.CFG.FALLBACK_SCALE;
     this.baseS = s;
     this.uppo.object3D.scale.set(s, s, s);
-    this.uppo.object3D.position.set(0, 0, 0);
+    let placed = false;
+    if (root) {
+      try {
+        const box = new THREE.Box3().setFromObject(root);
+        if (isFinite(box.min.y) && isFinite(box.max.y)) {
+          const c = new THREE.Vector3(); box.getCenter(c);
+          this.uppo.object3D.position.set(-c.x * s, -box.min.y * s, -c.z * s); placed = true;
+        }
+      } catch (e) {}
+    }
+    // assume an origin-centered export and lift feet up to the marker plane
+    if (!placed) this.uppo.object3D.position.set(0, this.CFG.TARGET_H * 0.5 * s, 0);
     this.leaves.object3D.position.y = this.CFG.TARGET_H * this.CFG.HEAD_Y_RATIO * s;
     this._set('model', 'OK ✓ (' + reason + '→固定 ' + s + ')');
-  },
-
-  _applyScale: function (s, recenter) {
-    if (!isFinite(s) || s <= 0) s = this.CFG.FALLBACK_SCALE;
-    this.baseS = s;
-    this.uppo.object3D.scale.set(s, s, s);
-    if (recenter) this.uppo.object3D.position.set(-recenter.center.x * s, -recenter.minY * s, -recenter.center.z * s);
-    else this.uppo.object3D.position.set(0, 0, 0);
   },
 
   _buildLeaves: function () {
@@ -257,7 +293,7 @@ AFRAME.registerComponent('uppo-experience', {
   #title{position:absolute;top:calc(env(safe-area-inset-top,0) + 14px);left:0;right:0;text-align:center;color:#fff;font-weight:700;font-size:17px;letter-spacing:.06em;text-shadow:0 2px 8px rgba(0,0,0,.6);}
   #title small{display:block;font-weight:500;font-size:12px;opacity:.9;margin-top:2px;letter-spacing:.14em;}
   #hint{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0) + 26px);background:rgba(43,38,34,.86);color:#f5efe1;font-weight:700;font-size:16px;padding:12px 22px;border-radius:999px;border:1.5px solid rgba(245,239,225,.35);box-shadow:0 6px 18px rgba(0,0,0,.35);transition:opacity .4s;white-space:nowrap;}
-  #farewell{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(82vw,340px);text-align:center;opacity:0;transition:opacity .6s;background:linear-gradient(180deg,var(--washi2),var(--washi));color:var(--ink);border:2px solid var(--ink);border-radius:14px;padding:22px 20px 18px;box-shadow:0 12px 34px rgba(0,0,0,.4);}
+  #farewell{position:absolute;left:50%;top:calc(env(safe-area-inset-top,0) + 60px);transform:translateX(-50%);width:min(82vw,340px);text-align:center;opacity:0;transition:opacity .6s;background:linear-gradient(180deg,var(--washi2),var(--washi));color:var(--ink);border:2px solid var(--ink);border-radius:14px;padding:22px 20px 18px;box-shadow:0 12px 34px rgba(0,0,0,.4);}
   #farewell .fw-lead{font-weight:700;font-size:19px;line-height:1.7;}
   #farewell .fw-sub{margin-top:12px;font-family:"Shippori Mincho",serif;font-weight:600;font-size:13px;color:var(--bark);letter-spacing:.04em;}
   #farewell .strip{display:flex;gap:5px;justify-content:center;margin-top:14px;}
