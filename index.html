@@ -56,7 +56,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 </script>
 <script>
-/* uppo-experience v4: 3-tier model measure + recentering fallback + reliable camera check */
+/* uppo-experience v5: 3-tier model measure + recentering fallback + reliable camera check */
 AFRAME.registerComponent('uppo-experience', {
   init: function () {
     this.CFG    = window.UPPO_CONFIG;
@@ -326,7 +326,7 @@ AFRAME.registerComponent('uppo-experience', {
     device-orientation-permission-ui="enabled: false">
 
     <a-assets>
-      <a-asset-item id="uppoModel" src="uppo.glb"></a-asset-item>
+      <a-asset-item id="uppoModel" src="uppo.glb?v=7"></a-asset-item>
     </a-assets>
 
     <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
