@@ -72,7 +72,7 @@ AFRAME.registerComponent('uppo-experience', {
     this._buildRoses();
 
     this.uppo.addEventListener('model-loaded', () => this._onModelLoaded());
-    this.uppo.addEventListener('model-error', () => this._set('model','読込エラー ✗ (uppo.glb)'));
+    this.uppo.addEventListener('model-error', () => this._set('model','読込エラー ✗ (uppo7.glb)'));
 
     const sc = this.el.sceneEl;
     sc.addEventListener('arError', () => this._set('AR','起動エラー ✗ (カメラ許可/対応を確認)'));
@@ -280,7 +280,7 @@ AFRAME.registerComponent('uppo-experience', {
   _setFarewell:function(on){const el=document.getElementById('farewell');if(el)el.style.opacity=on?'1':'0';},
   _set:function(k,v){this.dbg[k]=v;this._renderDbg();},
   _renderDbg:function(){if(!this.CFG.DEBUG)return;const el=document.getElementById('debug');if(!el)return;el.style.display='block';
-    el.textContent=`ビルド: v5 ✅（新）\nカメラ: ${this.dbg.AR}\nモデル: ${this.dbg.model}\nマーカー: ${this.dbg.target}\n状態: ${this.dbg.state}`;},
+    el.textContent=`ビルド: v6 ✅（新）\nカメラ: ${this.dbg.AR}\nモデル: ${this.dbg.model}\nマーカー: ${this.dbg.target}\n状態: ${this.dbg.state}`;},
 });
 
 </script>
@@ -326,7 +326,7 @@ AFRAME.registerComponent('uppo-experience', {
     device-orientation-permission-ui="enabled: false">
 
     <a-assets>
-      <a-asset-item id="uppoModel" src="uppo.glb?v=7"></a-asset-item>
+      <a-asset-item id="uppoModel" src="uppo7.glb"></a-asset-item>
     </a-assets>
 
     <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
